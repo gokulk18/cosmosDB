@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-cosmos-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: node-cosmos-app
+  template:
+    metadata:
+      labels:
+        app: node-cosmos-app
+    spec:
+      containers:
+        - name: node-app
+          # Replace with your Docker Hub registry image name if you decide to push to a registry later
+          image: your-dockerhub-username/node-cosmos-aks-demo:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: NODE_ENV
+              value: "production"
+            - name: COSMOS_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: cosmos-db-secret
+                  key: COSMOS_CONNECTION_STRING
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/status
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20

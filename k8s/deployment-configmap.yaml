@@ -1,0 +1,725 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: node-app-code
+data:
+  package.json: |
+    {
+      "name": "node-cosmos-aks-demo",
+      "version": "1.0.0",
+      "main": "server.js",
+      "dependencies": {
+        "@azure/cosmos": "^4.2.0",
+        "dotenv": "^16.4.5",
+        "express": "^4.19.2"
+      }
+    }
+  server.js: |
+    const express = require("express");
+    const path = require("path");
+    const { CosmosClient } = require("@azure/cosmos");
+    require("dotenv").config();
+
+    const app = express();
+    const PORT = process.env.PORT || 8080;
+
+    app.use(express.json());
+    app.use(express.static(path.join(__dirname, "public")));
+
+    // Cosmos DB Configuration
+    const connectionString = process.env.COSMOS_CONNECTION_STRING;
+    const databaseId = "DemoDB";
+    const containerId = "Items";
+
+    let client = null;
+    let database = null;
+    let container = null;
+    let dbError = null;
+    let cosmosEndpoint = "Not Connected";
+
+    // Helper function to extract endpoint from connection string for UI display
+    function getEndpointFromConnectionString(connStr) {
+      if (!connStr) return "Missing Connection String";
+      try {
+        const parts = connStr.split(";");
+        for (const part of parts) {
+          if (part.toLowerCase().startsWith("accountendpoint=")) {
+            return part.split("=")[1];
+          }
+        }
+      } catch (e) {
+        return "Invalid Connection String Format";
+      }
+      return "Unknown Endpoint";
+    }
+
+    // Initialize Cosmos DB Client
+    async function initCosmos() {
+      if (!connectionString) {
+        const msg = "COSMOS_CONNECTION_STRING environment variable is not defined.";
+        console.error(msg);
+        dbError = msg;
+        return;
+      }
+
+      try {
+        cosmosEndpoint = getEndpointFromConnectionString(connectionString);
+        console.log(`Initializing Cosmos DB Client for endpoint: ${cosmosEndpoint}`);
+        
+        client = new CosmosClient(connectionString);
+
+        // Verify Database exists
+        console.log(`Verifying database "${databaseId}" exists...`);
+        database = client.database(databaseId);
+        await database.read();
+
+        // Verify Container exists
+        console.log(`Verifying container "${containerId}" exists...`);
+        container = database.container(containerId);
+        await container.read();
+        
+        dbError = null;
+        console.log("Cosmos DB verification completed successfully.");
+      } catch (err) {
+        console.error("Cosmos DB connection or verification failed:", err.message);
+        dbError = err.message;
+      }
+    }
+
+    // Initialize on startup
+    initCosmos();
+
+    // Endpoint to check status
+    app.get("/api/status", (req, res) => {
+      res.json({
+        status: dbError ? "Error" : (client ? "Connected" : "Initializing"),
+        endpoint: cosmosEndpoint,
+        database: databaseId,
+        container: containerId,
+        error: dbError,
+        environment: {
+          port: PORT,
+          nodeEnv: process.env.NODE_ENV || "development"
+        }
+      });
+    });
+
+    // Endpoint to get all items
+    app.get("/api/items", async (req, res) => {
+      if (dbError) {
+        return res.status(500).json({ error: `Cosmos DB not connected: ${dbError}` });
+      }
+      if (!container) {
+        return res.status(503).json({ error: "Cosmos DB client is initializing, please try again." });
+      }
+
+      try {
+        console.log("Querying items from Cosmos DB...");
+        const querySpec = {
+          query: "SELECT c.id, c.name, c.category, c.quantity, c._ts FROM c ORDER BY c._ts DESC"
+        };
+        const { resources: items } = await container.items.query(querySpec).fetchAll();
+        res.json(items);
+      } catch (err) {
+        console.error("Error querying items:", err.message);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // Endpoint to create a new item
+    app.post("/api/items", async (req, res) => {
+      if (dbError) {
+        return res.status(500).json({ error: `Cosmos DB not connected: ${dbError}` });
+      }
+      if (!container) {
+        return res.status(503).json({ error: "Cosmos DB client is initializing, please try again." });
+      }
+
+      const { name, category, quantity } = req.body;
+      if (!name || !category) {
+        return res.status(400).json({ error: "Name and Category are required fields." });
+      }
+
+      try {
+        const qty = parseInt(quantity, 10) || 1;
+        const newItem = {
+          id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          name,
+          category,
+          quantity: qty
+        };
+
+        console.log(`Inserting item: ${JSON.stringify(newItem)}`);
+        const { resource: createdItem } = await container.items.create(newItem);
+        res.status(201).json(createdItem);
+      } catch (err) {
+        console.error("Error creating item:", err.message);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // Endpoint to clear all items (deletes items individually)
+    app.post("/api/items/clear", async (req, res) => {
+      if (dbError) {
+        return res.status(500).json({ error: `Cosmos DB not connected: ${dbError}` });
+      }
+      if (!container || !database) {
+        return res.status(503).json({ error: "Cosmos DB client is initializing, please try again." });
+      }
+
+      try {
+        console.log("Querying all items to delete...");
+        const { resources: items } = await container.items.readAll().fetchAll();
+        console.log(`Deleting ${items.length} items...`);
+        
+        for (const item of items) {
+          await container.item(item.id, item.category).delete();
+        }
+
+        res.json({ message: "All items cleared successfully." });
+      } catch (err) {
+        console.error("Error clearing items:", err.message);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // Start express server
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Application is running on http://0.0.0.0:${PORT}`);
+    });
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Azure Cosmos DB AKS Demo</title>
+      <link rel="preconnect" href="https://fonts.googleapis.com">
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+      <style>
+        :root {
+          --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #020617 100%);
+          --card-bg: rgba(30, 41, 59, 0.45);
+          --card-border: rgba(255, 255, 255, 0.08);
+          --text-primary: #f8fafc;
+          --text-secondary: #94a3b8;
+          --accent-azure: #0078d4;
+          --accent-azure-hover: #106ebe;
+          --accent-azure-glow: rgba(0, 120, 212, 0.35);
+          --success-green: #10b981;
+          --success-green-glow: rgba(16, 185, 129, 0.3);
+          --danger-red: #ef4444;
+          --danger-red-glow: rgba(239, 68, 68, 0.3);
+          --focus-ring: #60a5fa;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+          font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          background: var(--bg-gradient);
+          color: var(--text-primary);
+          min-height: 100vh;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          padding: 2rem 1rem;
+          overflow-x: hidden;
+        }
+        .container { width: 100%; max-width: 1100px; display: flex; flex-direction: column; gap: 1.5rem; }
+        header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 1.5rem;
+          border-radius: 16px;
+          background: var(--card-bg);
+          border: 1px solid var(--card-border);
+          backdrop-filter: blur(16px);
+          box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+        }
+        .logo-container { display: flex; align-items: center; gap: 0.75rem; }
+        .logo-icon {
+          width: 36px;
+          height: 36px;
+          background: linear-gradient(135deg, #0078d4 0%, #50e4ff 100%);
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: 700;
+          font-size: 1.25rem;
+          box-shadow: 0 0 15px var(--accent-azure-glow);
+        }
+        h1 {
+          font-size: 1.5rem;
+          font-weight: 700;
+          letter-spacing: -0.025em;
+          background: linear-gradient(to right, #ffffff, #93c5fd);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+        }
+        .subtitle { font-size: 0.85rem; color: var(--text-secondary); margin-top: 2px; }
+        .status-badge {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          background: rgba(15, 23, 42, 0.6);
+          padding: 0.5rem 1rem;
+          border-radius: 9999px;
+          border: 1px solid var(--card-border);
+          font-size: 0.85rem;
+          font-weight: 500;
+        }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; background-color: var(--text-secondary); }
+        .status-dot.connected {
+          background-color: var(--success-green);
+          box-shadow: 0 0 8px var(--success-green-glow);
+          animation: pulse 2s infinite;
+        }
+        .status-dot.error {
+          background-color: var(--danger-red);
+          box-shadow: 0 0 8px var(--danger-red-glow);
+          animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+          0% { transform: scale(0.95); opacity: 0.8; }
+          50% { transform: scale(1.1); opacity: 1; }
+          100% { transform: scale(0.95); opacity: 0.8; }
+        }
+        .dashboard-grid { display: grid; grid-template-columns: 1fr; gap: 1.5rem; }
+        @media (min-width: 768px) { .dashboard-grid { grid-template-columns: 350px 1fr; } }
+        .card {
+          background: var(--card-bg);
+          border: 1px solid var(--card-border);
+          backdrop-filter: blur(16px);
+          border-radius: 16px;
+          padding: 1.5rem;
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+          display: flex;
+          flex-direction: column;
+          gap: 1.25rem;
+        }
+        .card-title {
+          font-size: 1.1rem;
+          font-weight: 600;
+          color: var(--text-primary);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+          padding-bottom: 0.75rem;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .db-details { display: flex; flex-direction: column; gap: 0.75rem; font-size: 0.85rem; }
+        .detail-row {
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+          background: rgba(15, 23, 42, 0.3);
+          padding: 0.6rem 0.8rem;
+          border-radius: 8px;
+          border: 1px solid rgba(255, 255, 255, 0.03);
+        }
+        .detail-label { color: var(--text-secondary); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .detail-val { font-family: monospace; color: var(--text-primary); word-break: break-all; }
+        .form-group { display: flex; flex-direction: column; gap: 0.5rem; }
+        label { font-size: 0.85rem; font-weight: 500; color: var(--text-secondary); }
+        input, select {
+          background: rgba(15, 23, 42, 0.5);
+          border: 1px solid var(--card-border);
+          color: var(--text-primary);
+          padding: 0.75rem;
+          border-radius: 8px;
+          font-family: inherit;
+          font-size: 0.9rem;
+          transition: all 0.2s ease;
+          width: 100%;
+        }
+        input:focus, select:focus {
+          outline: none;
+          border-color: var(--focus-ring);
+          box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.2);
+        }
+        .btn {
+          background: var(--accent-azure);
+          color: white;
+          border: none;
+          padding: 0.75rem 1.25rem;
+          border-radius: 8px;
+          font-size: 0.9rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+          box-shadow: 0 4px 12px var(--accent-azure-glow);
+        }
+        .btn:hover { background: var(--accent-azure-hover); transform: translateY(-1px); }
+        .btn:active { transform: translateY(1px); }
+        .btn-secondary { background: rgba(239, 68, 68, 0.15); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); box-shadow: none; }
+        .btn-secondary:hover { background: rgba(239, 68, 68, 0.25); color: #fecaca; }
+        .items-container { overflow-x: auto; border-radius: 8px; border: 1px solid var(--card-border); }
+        table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.9rem; }
+        th { background: rgba(15, 23, 42, 0.7); color: var(--text-secondary); font-weight: 600; padding: 0.85rem 1rem; border-bottom: 1px solid var(--card-border); }
+        td { padding: 0.85rem 1rem; border-bottom: 1px solid rgba(255, 255, 255, 0.04); color: var(--text-primary); }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: rgba(255, 255, 255, 0.02); }
+        .category-badge { display: inline-block; padding: 0.25rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.025em; }
+        .badge-electronics { background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.3); }
+        .badge-apparel { background: rgba(139, 92, 246, 0.15); color: #c084fc; border: 1px solid rgba(139, 92, 246, 0.3); }
+        .badge-food { background: rgba(245, 158, 11, 0.15); color: #fde047; border: 1px solid rgba(245, 158, 11, 0.3); }
+        .badge-other { background: rgba(107, 114, 128, 0.15); color: #d1d5db; border: 1px solid rgba(107, 114, 128, 0.3); }
+        .quantity-val { font-weight: 600; font-family: monospace; }
+        .id-val { font-family: monospace; font-size: 0.8rem; color: var(--text-secondary); }
+        .empty-state { padding: 3rem; text-align: center; color: var(--text-secondary); font-style: italic; }
+        .toast-container { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 1000; }
+        .toast {
+          background: rgba(30, 41, 59, 0.95); border-left: 4px solid var(--accent-azure); color: var(--text-primary); padding: 1rem; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+          display: flex; justify-content: space-between; align-items: center; gap: 1rem; min-width: 250px; max-width: 400px; backdrop-filter: blur(8px);
+          border: 1px solid var(--card-border); transform: translateY(20px); opacity: 0; animation: slideIn 0.3s forwards;
+        }
+        @keyframes slideIn { to { transform: translateY(0); opacity: 1; } }
+        .toast.success { border-left-color: var(--success-green); }
+        .toast.error { border-left-color: var(--danger-red); }
+        .toast-close { cursor: pointer; color: var(--text-secondary); font-weight: bold; border: none; background: none; }
+        .toast-close:hover { color: var(--text-primary); }
+        .error-banner { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 12px; padding: 1rem; color: #fca5a5; display: none; font-size: 0.9rem; margin-bottom: 1rem; }
+        .error-banner-title { font-weight: 600; margin-bottom: 0.25rem; display: flex; align-items: center; gap: 0.5rem; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <header>
+          <div class="logo-container">
+            <div class="logo-icon">C</div>
+            <div>
+              <h1>Cosmos DB Explorer</h1>
+              <div class="subtitle">Node.js Monolith on AKS Cluster</div>
+            </div>
+          </div>
+          <div class="status-badge">
+            <div id="statusDot" class="status-dot"></div>
+            <span id="statusText">Checking Connection...</span>
+          </div>
+        </header>
+
+        <div id="errorBanner" class="error-banner">
+          <div class="error-banner-title"><span>⚠️</span> Connection Error</div>
+          <div id="errorText">Database not initialized. Please verify your COSMOS_CONNECTION_STRING environment variable.</div>
+        </div>
+
+        <div class="dashboard-grid">
+          <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+            <div class="card">
+              <div class="card-title">Cosmos DB Info</div>
+              <div class="db-details">
+                <div class="detail-row">
+                  <span class="detail-label">Endpoint</span>
+                  <span id="infoEndpoint" class="detail-val">Loading...</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">Database Name</span>
+                  <span id="infoDatabase" class="detail-val">Loading...</span>
+                </div>
+                <div class="detail-row">
+                  <span class="detail-label">Container Name</span>
+                  <span id="infoContainer" class="detail-val">Loading...</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Add New Document</div>
+              <form id="addItemForm" onsubmit="addItem(event)">
+                <div style="display: flex; flex-direction: column; gap: 1rem;">
+                  <div class="form-group">
+                    <label for="itemName">Item Name</label>
+                    <input type="text" id="itemName" required placeholder="e.g., Laptop, Coffee Mug">
+                  </div>
+                  <div class="form-group">
+                    <label for="itemCategory">Category (Partition Key)</label>
+                    <select id="itemCategory" required>
+                      <option value="Electronics">Electronics</option>
+                      <option value="Apparel">Apparel</option>
+                      <option value="Food">Food</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label for="itemQuantity">Quantity</label>
+                    <input type="number" id="itemQuantity" min="1" value="1" required>
+                  </div>
+                  <button type="submit" class="btn" id="submitBtn">Add Document</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <div class="card" style="flex-grow: 1;">
+            <div class="card-title">
+              <span>Documents in Container</span>
+              <button onclick="clearItems()" class="btn btn-secondary" id="clearBtn">Reset Container</button>
+            </div>
+            <div class="items-container">
+              <table id="itemsTable">
+                <thead>
+                  <tr>
+                    <th style="width: 25%;">ID</th>
+                    <th>Name</th>
+                    <th style="width: 20%;">Category</th>
+                    <th style="width: 15%; text-align: center;">Quantity</th>
+                    <th style="width: 20%;">Timestamp</th>
+                  </tr>
+                </thead>
+                <tbody id="itemsTableBody">
+                  <tr>
+                    <td colspan="5" style="text-align: center; padding: 2rem; color: var(--text-secondary);">Loading items...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="toast-container" id="toastContainer"></div>
+
+      <script>
+        function showToast(message, type = 'info') {
+          const container = document.getElementById('toastContainer');
+          const toast = document.createElement('div');
+          toast.className = `toast ${type}`;
+          let icon = 'ℹ️';
+          if (type === 'success') icon = '✅';
+          if (type === 'error') icon = '❌';
+          toast.innerHTML = `
+            <span>${icon} ${message}</span>
+            <button class="toast-close" onclick="this.parentElement.remove()">&times;</button>
+          `;
+          container.appendChild(toast);
+          setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => toast.remove(), 300);
+          }, 4000);
+        }
+
+        async function checkStatus() {
+          try {
+            const response = await fetch('/api/status');
+            const data = await response.json();
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            const errorBanner = document.getElementById('errorBanner');
+            const errorText = document.getElementById('errorText');
+            
+            document.getElementById('infoEndpoint').textContent = data.endpoint;
+            document.getElementById('infoDatabase').textContent = data.database;
+            document.getElementById('infoContainer').textContent = data.container;
+
+            if (data.status === 'Connected') {
+              statusDot.className = 'status-dot connected';
+              statusText.textContent = 'Cosmos DB Connected';
+              errorBanner.style.display = 'none';
+              return true;
+            } else {
+              statusDot.className = 'status-dot error';
+              statusText.textContent = 'Cosmos DB Error';
+              errorBanner.style.display = 'block';
+              errorText.textContent = data.error || 'Check environment variables.';
+              return false;
+            }
+          } catch (err) {
+            document.getElementById('statusDot').className = 'status-dot error';
+            document.getElementById('statusText').textContent = 'Server Unreachable';
+            return false;
+          }
+        }
+
+        function getCategoryBadgeClass(category) {
+          const cat = (category || '').toLowerCase();
+          if (cat === 'electronics') return 'badge-electronics';
+          if (cat === 'apparel') return 'badge-apparel';
+          if (cat === 'food') return 'badge-food';
+          return 'badge-other';
+        }
+
+        async function fetchItems() {
+          const tbody = document.getElementById('itemsTableBody');
+          try {
+            const response = await fetch('/api/items');
+            if (!response.ok) {
+              const errData = await response.json();
+              throw new Error(errData.error || 'Failed to fetch items');
+            }
+            const items = await response.json();
+            tbody.innerHTML = '';
+            if (items.length === 0) {
+              tbody.innerHTML = `<tr><td colspan="5" class="empty-state">No documents found. Add one!</td></tr>`;
+              return;
+            }
+            items.forEach(item => {
+              const tr = document.createElement('tr');
+              const date = new Date(item._ts * 1000).toLocaleString();
+              tr.innerHTML = `
+                <td><span class="id-val" title="${item.id}">${item.id.substring(0, 13)}...</span></td>
+                <td><strong>${escapeHtml(item.name)}</strong></td>
+                <td><span class="category-badge ${getCategoryBadgeClass(item.category)}">${escapeHtml(item.category)}</span></td>
+                <td style="text-align: center;"><span class="quantity-val">${item.quantity}</span></td>
+                <td style="font-size: 0.85rem; color: var(--text-secondary);">${date}</td>
+              `;
+              tbody.appendChild(tr);
+            });
+          } catch (err) {
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--danger-red); padding: 2rem;">⚠️ Error: ${err.message}</td></tr>`;
+          }
+        }
+
+        async function addItem(event) {
+          event.preventDefault();
+          const nameInput = document.getElementById('itemName');
+          const categoryInput = document.getElementById('itemCategory');
+          const quantityInput = document.getElementById('itemQuantity');
+          const submitBtn = document.getElementById('submitBtn');
+
+          const name = nameInput.value.trim();
+          const category = categoryInput.value;
+          const quantity = quantityInput.value;
+
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Saving...';
+
+          try {
+            const response = await fetch('/api/items', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name, category, quantity })
+            });
+
+            if (!response.ok) {
+              const errData = await response.json();
+              throw new Error(errData.error || 'Failed to add item');
+            }
+            showToast('Document created successfully!', 'success');
+            nameInput.value = '';
+            quantityInput.value = '1';
+            await fetchItems();
+          } catch (err) {
+            showToast(err.message, 'error');
+          } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Add Document';
+          }
+        }
+
+        async function clearItems() {
+          if (!confirm('Clear all documents?')) return;
+          const clearBtn = document.getElementById('clearBtn');
+          clearBtn.disabled = true;
+          clearBtn.textContent = 'Resetting...';
+          try {
+            const response = await fetch('/api/items/clear', { method: 'POST' });
+            if (!response.ok) {
+              const errData = await response.json();
+              throw new Error(errData.error || 'Failed to clear items');
+            }
+            showToast('Container reset successfully!', 'success');
+            await fetchItems();
+          } catch (err) {
+            showToast(err.message, 'error');
+          } finally {
+            clearBtn.disabled = false;
+            clearBtn.textContent = 'Reset Container';
+          }
+        }
+
+        function escapeHtml(str) {
+          return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+        }
+
+        async function init() {
+          const isConnected = await checkStatus();
+          if (isConnected) {
+            await fetchItems();
+          } else {
+            const statusPoll = setInterval(async () => {
+              const nowConnected = await checkStatus();
+              if (nowConnected) {
+                clearInterval(statusPoll);
+                await fetchItems();
+              }
+            }, 5000);
+          }
+        }
+        window.onload = init;
+      </script>
+    </body>
+    </html>
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-cosmos-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: node-cosmos-app
+  template:
+    metadata:
+      labels:
+        app: node-cosmos-app
+    spec:
+      volumes:
+        # Create a writeable directory where npm install can run
+        - name: app-volume
+          emptyDir: {}
+        # Mount the code ConfigMap read-only
+        - name: code-volume
+          configMap:
+            name: node-app-code
+      containers:
+        - name: node-app
+          image: node:18-alpine
+          workingDir: /app
+          # Copy files from read-only mount to writeable directory, install dependencies, and start server
+          command:
+            - sh
+            - -c
+            - |
+              cp /app-src/package.json /app/package.json
+              cp /app-src/server.js /app/server.js
+              mkdir -p /app/public
+              cp /app-src/index.html /app/public/index.html
+              cd /app
+              npm install
+              node server.js
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: NODE_ENV
+              value: "production"
+            - name: COSMOS_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: cosmos-db-secret
+                  key: COSMOS_CONNECTION_STRING
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/status
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          volumeMounts:
+            - name: app-volume
+              mountPath: /app
+            - name: code-volume
+              mountPath: /app-src

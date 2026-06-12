@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Azure Cosmos DB AKS Demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #020617 100%);
+      --card-bg: rgba(30, 41, 59, 0.45);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --accent-azure: #0078d4;
+      --accent-azure-hover: #106ebe;
+      --accent-azure-glow: rgba(0, 120, 212, 0.35);
+      --success-green: #10b981;
+      --success-green-glow: rgba(16, 185, 129, 0.3);
+      --danger-red: #ef4444;
+      --danger-red-glow: rgba(239, 68, 68, 0.3);
+      --focus-ring: #60a5fa;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg-gradient);
+      color: var(--text-primary);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+      overflow-x: hidden;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 1100px;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    /* Header styling */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1.5rem;
+      border-radius: 16px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      backdrop-filter: blur(16px);
+      box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+    }
+
+    .logo-container {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, #0078d4 0%, #50e4ff 100%);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 1.25rem;
+      box-shadow: 0 0 15px var(--accent-azure-glow);
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      background: linear-gradient(to right, #ffffff, #93c5fd);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .subtitle {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+
+    /* Connection Status */
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(15, 23, 42, 0.6);
+      padding: 0.5rem 1rem;
+      border-radius: 9999px;
+      border: 1px solid var(--card-border);
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background-color: var(--text-secondary);
+    }
+
+    .status-dot.connected {
+      background-color: var(--success-green);
+      box-shadow: 0 0 8px var(--success-green-glow);
+      animation: pulse 2s infinite;
+    }
+
+    .status-dot.error {
+      background-color: var(--danger-red);
+      box-shadow: 0 0 8px var(--danger-red-glow);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.1); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+
+    /* Dashboard Layout */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (min-width: 768px) {
+      .dashboard-grid {
+        grid-template-columns: 350px 1fr;
+      }
+    }
+
+    /* Cards */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      backdrop-filter: blur(16px);
+      border-radius: 16px;
+      padding: 1.5rem;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .card-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      padding-bottom: 0.75rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    /* Connection Details Card */
+    .db-details {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      font-size: 0.85rem;
+    }
+
+    .detail-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      background: rgba(15, 23, 42, 0.3);
+      padding: 0.6rem 0.8rem;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.03);
+    }
+
+    .detail-label {
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .detail-val {
+      font-family: monospace;
+      color: var(--text-primary);
+      word-break: break-all;
+    }
+
+    /* Forms */
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    label {
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    input, select {
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid var(--card-border);
+      color: var(--text-primary);
+      padding: 0.75rem;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 0.9rem;
+      transition: all 0.2s ease;
+      width: 100%;
+    }
+
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--focus-ring);
+      box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.2);
+    }
+
+    /* Buttons */
+    .btn {
+      background: var(--accent-azure);
+      color: white;
+      border: none;
+      padding: 0.75rem 1.25rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      box-shadow: 0 4px 12px var(--accent-azure-glow);
+    }
+
+    .btn:hover {
+      background: var(--accent-azure-hover);
+      transform: translateY(-1px);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    .btn-secondary {
+      background: rgba(239, 68, 68, 0.15);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      box-shadow: none;
+    }
+
+    .btn-secondary:hover {
+      background: rgba(239, 68, 68, 0.25);
+      color: #fecaca;
+    }
+
+    /* Table & Items List */
+    .items-container {
+      overflow-x: auto;
+      border-radius: 8px;
+      border: 1px solid var(--card-border);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.9rem;
+    }
+
+    th {
+      background: rgba(15, 23, 42, 0.7);
+      color: var(--text-secondary);
+      font-weight: 600;
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    td {
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      color: var(--text-primary);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .category-badge {
+      display: inline-block;
+      padding: 0.25rem 0.6rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.025em;
+    }
+
+    .badge-electronics { background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.3); }
+    .badge-apparel { background: rgba(139, 92, 246, 0.15); color: #c084fc; border: 1px solid rgba(139, 92, 246, 0.3); }
+    .badge-food { background: rgba(245, 158, 11, 0.15); color: #fde047; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .badge-other { background: rgba(107, 114, 128, 0.15); color: #d1d5db; border: 1px solid rgba(107, 114, 128, 0.3); }
+
+    .quantity-val {
+      font-weight: 600;
+      font-family: monospace;
+    }
+
+    .id-val {
+      font-family: monospace;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+
+    .empty-state {
+      padding: 3rem;
+      text-align: center;
+      color: var(--text-secondary);
+      font-style: italic;
+    }
+
+    /* Notification system */
+    .toast-container {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 1000;
+    }
+
+    .toast {
+      background: rgba(30, 41, 59, 0.95);
+      border-left: 4px solid var(--accent-azure);
+      color: var(--text-primary);
+      padding: 1rem;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      min-width: 250px;
+      max-width: 400px;
+      backdrop-filter: blur(8px);
+      border-top: 1px solid var(--card-border);
+      border-right: 1px solid var(--card-border);
+      border-bottom: 1px solid var(--card-border);
+      transform: translateY(20px);
+      opacity: 0;
+      animation: slideIn 0.3s forwards;
+    }
+
+    @keyframes slideIn {
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .toast.success { border-left-color: var(--success-green); }
+    .toast.error { border-left-color: var(--danger-red); }
+
+    .toast-close {
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-weight: bold;
+      border: none;
+      background: none;
+    }
+
+    .toast-close:hover {
+      color: var(--text-primary);
+    }
+
+    /* Error Banner */
+    .error-banner {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: 12px;
+      padding: 1rem;
+      color: #fca5a5;
+      display: none;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+
+    .error-banner-title {
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <header>
+      <div class="logo-container">
+        <div class="logo-icon">C</div>
+        <div>
+          <h1>Cosmos DB Explorer</h1>
+          <div class="subtitle">Node.js Monolith on AKS Cluster</div>
+        </div>
+      </div>
+      <div class="status-badge">
+        <div id="statusDot" class="status-dot"></div>
+        <span id="statusText">Checking Connection...</span>
+      </div>
+    </header>
+
+    <div id="errorBanner" class="error-banner">
+      <div class="error-banner-title">
+        <span>⚠️</span> Connection Error
+      </div>
+      <div id="errorText">Database not initialized. Please verify your COSMOS_CONNECTION_STRING environment variable.</div>
+    </div>
+
+    <div class="dashboard-grid">
+      <!-- Left Column: Settings and Input -->
+      <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+        <!-- Connection Details Card -->
+        <div class="card">
+          <div class="card-title">Cosmos DB Info</div>
+          <div class="db-details">
+            <div class="detail-row">
+              <span class="detail-label">Endpoint</span>
+              <span id="infoEndpoint" class="detail-val">Loading...</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Database Name</span>
+              <span id="infoDatabase" class="detail-val">Loading...</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Container Name</span>
+              <span id="infoContainer" class="detail-val">Loading...</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Add Item Card -->
+        <div class="card">
+          <div class="card-title">Add New Document</div>
+          <form id="addItemForm" onsubmit="addItem(event)">
+            <div style="display: flex; flex-direction: column; gap: 1rem;">
+              <div class="form-group">
+                <label for="itemName">Item Name</label>
+                <input type="text" id="itemName" required placeholder="e.g., Laptop, Coffee Mug">
+              </div>
+              <div class="form-group">
+                <label for="itemCategory">Category (Partition Key)</label>
+                <select id="itemCategory" required>
+                  <option value="Electronics">Electronics</option>
+                  <option value="Apparel">Apparel</option>
+                  <option value="Food">Food</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="itemQuantity">Quantity</label>
+                <input type="number" id="itemQuantity" min="1" value="1" required>
+              </div>
+              <button type="submit" class="btn" id="submitBtn">
+                Add Document
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- Right Column: Document Explorer -->
+      <div class="card" style="flex-grow: 1;">
+        <div class="card-title">
+          <span>Documents in Container</span>
+          <button onclick="clearItems()" class="btn btn-secondary" id="clearBtn">
+            Reset Container
+          </button>
+        </div>
+        <div class="items-container">
+          <table id="itemsTable">
+            <thead>
+              <tr>
+                <th style="width: 25%;">ID</th>
+                <th>Name</th>
+                <th style="width: 20%;">Category</th>
+                <th style="width: 15%; text-align: center;">Quantity</th>
+                <th style="width: 20%;">Timestamp</th>
+              </tr>
+            </thead>
+            <tbody id="itemsTableBody">
+              <tr>
+                <td colspan="5" style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+                  Loading items...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script>
+    // Toast Notification helper
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      
+      let icon = 'ℹ️';
+      if (type === 'success') icon = '✅';
+      if (type === 'error') icon = '❌';
+
+      toast.innerHTML = `
+        <span>${icon} ${message}</span>
+        <button class="toast-close" onclick="this.parentElement.remove()">&times;</button>
+      `;
+      container.appendChild(toast);
+      
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+      }, 4000);
+    }
+
+    // Load Connection Status
+    async function checkStatus() {
+      try {
+        const response = await fetch('/api/status');
+        const data = await response.json();
+        
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const errorBanner = document.getElementById('errorBanner');
+        const errorText = document.getElementById('errorText');
+        
+        document.getElementById('infoEndpoint').textContent = data.endpoint;
+        document.getElementById('infoDatabase').textContent = data.database;
+        document.getElementById('infoContainer').textContent = data.container;
+
+        if (data.status === 'Connected') {
+          statusDot.className = 'status-dot connected';
+          statusText.textContent = 'Cosmos DB Connected';
+          errorBanner.style.display = 'none';
+          return true;
+        } else {
+          statusDot.className = 'status-dot error';
+          statusText.textContent = 'Cosmos DB Error';
+          errorBanner.style.display = 'block';
+          errorText.textContent = data.error || 'Check environment variables and connection string.';
+          return false;
+        }
+      } catch (err) {
+        document.getElementById('statusDot').className = 'status-dot error';
+        document.getElementById('statusText').textContent = 'Server Unreachable';
+        return false;
+      }
+    }
+
+    // Get Badge class by category
+    function getCategoryBadgeClass(category) {
+      const cat = (category || '').toLowerCase();
+      if (cat === 'electronics') return 'badge-electronics';
+      if (cat === 'apparel') return 'badge-apparel';
+      if (cat === 'food') return 'badge-food';
+      return 'badge-other';
+    }
+
+    // Load Items
+    async function fetchItems() {
+      const tbody = document.getElementById('itemsTableBody');
+      try {
+        const response = await fetch('/api/items');
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || 'Failed to fetch items');
+        }
+        
+        const items = await response.json();
+        tbody.innerHTML = '';
+        
+        if (items.length === 0) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="5" class="empty-state">
+                No documents found in container. Add one using the form!
+              </td>
+            </tr>
+          `;
+          return;
+        }
+
+        items.forEach(item => {
+          const tr = document.createElement('tr');
+          const date = new Date(item._ts * 1000).toLocaleString();
+          
+          tr.innerHTML = `
+            <td><span class="id-val" title="${item.id}">${item.id.substring(0, 13)}...</span></td>
+            <td><strong>${escapeHtml(item.name)}</strong></td>
+            <td><span class="category-badge ${getCategoryBadgeClass(item.category)}">${escapeHtml(item.category)}</span></td>
+            <td style="text-align: center;"><span class="quantity-val">${item.quantity}</span></td>
+            <td style="font-size: 0.85rem; color: var(--text-secondary);">${date}</td>
+          `;
+          tbody.appendChild(tr);
+        });
+      } catch (err) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="5" style="text-align: center; color: var(--danger-red); padding: 2rem;">
+              ⚠️ Error: ${err.message}
+            </td>
+          </tr>
+        `;
+      }
+    }
+
+    // Add Item
+    async function addItem(event) {
+      event.preventDefault();
+      
+      const nameInput = document.getElementById('itemName');
+      const categoryInput = document.getElementById('itemCategory');
+      const quantityInput = document.getElementById('itemQuantity');
+      const submitBtn = document.getElementById('submitBtn');
+
+      const name = nameInput.value.trim();
+      const category = categoryInput.value;
+      const quantity = quantityInput.value;
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Saving...';
+
+      try {
+        const response = await fetch('/api/items', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ name, category, quantity })
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || 'Failed to add item');
+        }
+
+        showToast('Document created successfully!', 'success');
+        nameInput.value = '';
+        quantityInput.value = '1';
+        
+        await fetchItems();
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Add Document';
+      }
+    }
+
+    // Clear Container
+    async function clearItems() {
+      if (!confirm('Are you sure you want to reset this container? All current documents will be deleted.')) {
+        return;
+      }
+
+      const clearBtn = document.getElementById('clearBtn');
+      clearBtn.disabled = true;
+      clearBtn.textContent = 'Resetting...';
+
+      try {
+        const response = await fetch('/api/items/clear', {
+          method: 'POST'
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || 'Failed to clear items');
+        }
+
+        showToast('Container reset successfully!', 'success');
+        await fetchItems();
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        clearBtn.disabled = false;
+        clearBtn.textContent = 'Reset Container';
+      }
+    }
+
+    // Helper to prevent XSS
+    function escapeHtml(str) {
+      return str.replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+    }
+
+    // Initial Load
+    async function init() {
+      const isConnected = await checkStatus();
+      if (isConnected) {
+        await fetchItems();
+      } else {
+        // Poll connection status every 5 seconds if not connected
+        const statusPoll = setInterval(async () => {
+          const nowConnected = await checkStatus();
+          if (nowConnected) {
+            clearInterval(statusPoll);
+            await fetchItems();
+          }
+        }, 5000);
+      }
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>
